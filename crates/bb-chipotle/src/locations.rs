@@ -1,14 +1,9 @@
+use super::constants::{API_KEY_HEADER, DEFAULT_RESTAURANT_SERVICE_URL};
+use super::error::*;
 use reqwest::Client;
 use serde::{self, Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{collections::HashMap, path::Path, sync::LazyLock};
-
-/// The default URL for the Chipotle restaurant service.
-const DEFAULT_RESTAURANT_SERVICE_URL: &str =
-    "https://services.chipotle.com/restaurant/v3/restaurant/";
-
-/// The header to use to send the API key.
-const API_KEY_HEADER: &str = "Ocp-Apim-Subscription-Key";
 
 /// Zip code overrides for specific location IDs.
 static ZIP_CODE_OVERRIDES: LazyLock<HashMap<i32, &'static str>> =
@@ -64,16 +59,10 @@ struct Address {
     country_code: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Location {
     pub id: i32,
     pub zip_code: String,
-}
-
-impl PartialEq for Location {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id && self.zip_code == other.zip_code
-    }
 }
 
 fn get_zip_code(location_id: &i32, address: &Address) -> String {
@@ -88,28 +77,14 @@ fn get_zip_code(location_id: &i32, address: &Address) -> String {
 fn get_us_locations(data: LocationDataResponse) -> Vec<Location> {
     data.data
         .iter()
-        .filter_map(|location| {
-            if let Some(address) = location.addresses.get(0) {
-                if address.country_code == "US" {
-                    return Some(Location {
-                        id: location.id,
-                        zip_code: get_zip_code(&location.id, address),
-                    });
-                }
-            } else {
-                eprintln!("Location {} has no address", location.id);
-            }
-            None
+        .filter_map(|location| match location.addresses.first() {
+            Some(address) if address.country_code == "US" => Some(Location {
+                id: location.id,
+                zip_code: get_zip_code(&location.id, address),
+            }),
+            _ => None,
         })
         .collect()
-}
-
-#[derive(Debug)]
-pub enum GetError {
-    RequestError(reqwest::Error),
-    ResponseError(reqwest::StatusCode),
-    ResponseBodyError(reqwest::Error),
-    ParseError(serde_json::Error),
 }
 
 pub async fn get(
@@ -117,56 +92,29 @@ pub async fn get(
     api_key: &str,
     restaurant_service_url: Option<&str>,
 ) -> Result<Vec<Location>, GetError> {
-    match client
+    let response = client
         .post(restaurant_service_url.unwrap_or(DEFAULT_RESTAURANT_SERVICE_URL))
         .header("Content-Type", "application/json")
         .header(API_KEY_HEADER, api_key)
         .body(DEFAULT_REQUEST_BODY.to_string())
         .send()
-        .await
-    {
-        Ok(response) => {
-            if !response.status().is_success() {
-                return Err(GetError::ResponseError(response.status()));
-            }
-            let response_body = response
-                .text()
-                .await
-                .map_err(|e| GetError::ResponseBodyError(e))?;
-            let parsed_body: LocationDataResponse = serde_json::from_str(response_body.as_str())
-                .map_err(|e| GetError::ParseError(e))?;
-            Ok(get_us_locations(parsed_body))
-        }
-        Err(e) => Err(GetError::RequestError(e)),
+        .await?;
+    if !response.status().is_success() {
+        return Err(GetError::ResponseError(response.status()));
     }
-}
-
-#[derive(Debug)]
-pub enum LoadError {
-    ReadError(std::io::Error),
-    ParseError(serde_json::Error),
+    let response_body = response.text().await.map_err(GetError::ResponseBodyError)?;
+    let parsed_body: LocationDataResponse = serde_json::from_str(response_body.as_str())?;
+    Ok(get_us_locations(parsed_body))
 }
 
 pub async fn load<P: AsRef<Path>>(path: P) -> Result<Vec<Location>, LoadError> {
-    let file_contents = tokio::fs::read_to_string(path)
-        .await
-        .map_err(|e| LoadError::ReadError(e))?;
-    let parsed_body: Vec<Location> =
-        serde_json::from_str(file_contents.as_str()).map_err(|e| LoadError::ParseError(e))?;
-    Ok(parsed_body)
-}
-
-#[derive(Debug)]
-pub enum SaveError {
-    WriteError(std::io::Error),
-    SerializeError(serde_json::Error),
+    let file_contents = tokio::fs::read_to_string(path).await?;
+    Ok(serde_json::from_str(file_contents.as_str())?)
 }
 
 pub async fn save<P: AsRef<Path>>(path: P, locations: &[Location]) -> Result<(), SaveError> {
-    let serialized = serde_json::to_string(locations).map_err(|e| SaveError::SerializeError(e))?;
-    tokio::fs::write(path, serialized)
-        .await
-        .map_err(|e| SaveError::WriteError(e))?;
+    let serialized = serde_json::to_string(locations)?;
+    tokio::fs::write(path, serialized).await?;
     Ok(())
 }
 
