@@ -1,31 +1,31 @@
-use bb_chipotle::api_key;
+use anyhow::Result;
+use bb_chipotle::client::{Endpoint, EndpointConfig};
 use clap::Parser;
-use serde_json::json;
 
 #[derive(Parser, Debug)]
 struct Args {
-    #[arg(short = 'e', long, default_value = api_key::DEFAULT_API_SOURCE_URL)]
+    #[arg(short = 'e', long)]
     endpoint: Option<String>,
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     let args = Args::parse();
-    let client = reqwest::Client::builder()
+    let http = reqwest::Client::builder()
         .gzip(true)
         .brotli(true)
         .build()
         .unwrap();
-    let api_key = api_key::get(&client, args.endpoint.as_deref()).await;
-    if api_key.is_err() {
-        println!(
-            "{}",
-            json!({
-                "error": format!("Failed to get API key: {:?}", api_key.err().unwrap()),
-            })
-        );
-        return;
-    }
-    let api_key = api_key.unwrap();
-    println!("{}", json!({ "api_key": api_key }));
+    let endpoints = EndpointConfig {
+        api_key: args.endpoint.map(|val| Endpoint {
+            url: val,
+            replace_token: None,
+        }),
+        menu: None,
+        restaurant: None,
+    };
+    let mut client = bb_chipotle::Client::new(http, Some(endpoints), None)?;
+    let api_key = client.load_api_key(false).await?;
+    println!("{}", api_key);
+    Ok(())
 }
