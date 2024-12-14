@@ -1,4 +1,7 @@
-use bb_chipotle::client::{Client, Endpoint, EndpointConfig};
+use bb_chipotle::{
+    client::{Client, Endpoint, EndpointConfig},
+    ApiKey,
+};
 use clap::Parser;
 use serde_json::json;
 use tokio_stream::{self, StreamExt};
@@ -33,16 +36,12 @@ struct Args {
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    let http_client = reqwest::Client::builder()
+    let http = reqwest::Client::builder()
         .gzip(true)
         .brotli(true)
         .build()
         .unwrap();
     let endpoints = EndpointConfig {
-        api_key: args.api_key_endpoint.map(|val| Endpoint {
-            url: val,
-            replace_token: None,
-        }),
         menu: args.menu_endpoint.map(|val| Endpoint {
             url: val,
             replace_token: None,
@@ -50,8 +49,12 @@ async fn main() {
         restaurant: None,
     };
     endpoints.validate().unwrap();
-    let mut client = Client::new(http_client, Some(endpoints), args.api_key).unwrap();
-    client.load_api_key(true).await.unwrap();
+    let api_key = if let Some(key) = args.api_key.as_deref() {
+        ApiKey::from_raw(key)
+    } else {
+        ApiKey::from_custom(&http, None).await.unwrap()
+    };
+    let client = Client::new(http, Some(endpoints), api_key).unwrap();
     let retrieved_locations = client
         .get_all_locations()
         .await
