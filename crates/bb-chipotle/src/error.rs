@@ -13,8 +13,8 @@ pub enum GetError {
     ResponseBodyError(#[source] reqwest::Error),
     #[error("unable to parse the response body: {0}")]
     ParseError(#[from] serde_json::Error),
-    #[error("unable to build response object: {0}")]
-    TranslateError(#[from] menu::BuildError),
+    #[error("unable to translate response object: {0}")]
+    TranslateError(#[from] menu::MenuBuilderError),
 }
 
 #[derive(Debug, Error)]

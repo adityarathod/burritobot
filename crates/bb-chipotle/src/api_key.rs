@@ -6,8 +6,7 @@ use regex::Regex;
 use reqwest::Client;
 use thiserror::Error;
 
-const DEFAULT_API_KEY_ENDPOINT: &str =
-    "https://orderweb-prd-centralus-cdne.azureedge.net/js/app.js";
+const DEFAULT_API_KEY_ENDPOINT: &str = "https://orderweb-cdn.chipotle.com/js/app.js";
 
 const API_KEY_PATTERN: &str = r#"gatewaySubscriptionKey:Q\("([a-zA-Z0-9-]+)"\)"#;
 static API_KEY_REGEX: LazyLock<Regex> =
@@ -20,14 +19,14 @@ pub struct ApiKey {
 
 impl ApiKey {
     /// Retrieve the API key from the default Chipotle client bundle.
-    pub async fn from_default() -> Result<Self, ApiKeyError> {
+    pub async fn get_default() -> Result<Self, ApiKeyError> {
         let client = default_http_client();
-        Self::from_custom(&client, None).await
+        Self::get_custom(&client, None).await
     }
 
     /// Retrieve the API key using custom HTTP client and endpoint.
     /// If the endpoint is not provided, the default Chipotle client bundle URL will be used.
-    pub async fn from_custom(client: &Client, endpoint: Option<&str>) -> Result<Self, ApiKeyError> {
+    pub async fn get_custom(client: &Client, endpoint: Option<&str>) -> Result<Self, ApiKeyError> {
         let response = client
             .get(endpoint.unwrap_or(DEFAULT_API_KEY_ENDPOINT))
             .send()
@@ -97,7 +96,7 @@ mod tests {
         let client = reqwest::Client::new();
 
         // Act
-        let api_key = ApiKey::from_custom(&client, Some(&url)).await;
+        let api_key = ApiKey::get_custom(&client, Some(&url)).await;
 
         // Assert
         assert!(
@@ -123,7 +122,7 @@ mod tests {
         let client = reqwest::Client::new();
 
         // Act
-        let api_key = ApiKey::from_custom(&client, Some(&url)).await;
+        let api_key = ApiKey::get_custom(&client, Some(&url)).await;
 
         // Assert
         assert!(api_key.is_err());
@@ -148,7 +147,7 @@ mod tests {
         let client = reqwest::Client::new();
 
         // Act
-        let api_key = ApiKey::from_custom(&client, Some(&url)).await;
+        let api_key = ApiKey::get_custom(&client, Some(&url)).await;
 
         // Assert
         assert!(api_key.is_err());
