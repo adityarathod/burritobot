@@ -4,13 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace]
-members = [
-    "crates/bb-chipotle",
-]
+members = [".", "pepper-api"]
 
 [dependencies]
 anyhow = "1.0"
-bb-chipotle = { path = "./crates/bb-chipotle" }
+pepper-api = { path = "./pepper-api" }
 clap = { version = "4.5.20", features = ["derive"] }
 futures = "0.3"
 indicatif = "0.17"
