@@ -1,6 +1,10 @@
 # burritobot
 
-idk something about burritos
+idk; something about burritos?
+
+## what's done
+
+- small API client
 
 ## roadmap
 
