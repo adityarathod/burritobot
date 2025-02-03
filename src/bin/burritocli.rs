@@ -1,8 +1,12 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use bb_chipotle::{menu::Menu, ApiKey};
 use clap::{Args, Parser, Subcommand};
+use futures::{stream, StreamExt};
+use indicatif::{ProgressBar, ProgressStyle};
 use serde_json::json;
-use tokio_stream::StreamExt;
+use tokio::time;
 
 #[derive(Parser, Debug)]
 struct CliArgs {
@@ -33,16 +37,16 @@ enum Command {
         location_opts: LocationOpts,
     },
 
-    #[clap(name = "get-menu", about = "Get menu for locations by ZIP code")]
-    Menu {
+    #[clap(name = "get-all-menus", about = "Get menu for all locations")]
+    AllMenus {
         #[command(flatten)]
         location_opts: LocationOpts,
 
         #[arg(short = 'm', long, help = "Menu endpoint")]
         menu_endpoint: Option<String>,
 
-        #[arg(short = 'z', long, help = "ZIP code")]
-        zip_code: String,
+        #[arg(short = 'o', long, help = "Output file")]
+        output_path: Option<String>,
     },
 }
 
@@ -82,10 +86,11 @@ async fn main() -> Result<()> {
                 serde_json::to_string::<bb_chipotle::locations::Locations>(&locations)?
             );
         }
-        Command::Menu {
+        // i've only ran this once lol
+        Command::AllMenus {
             location_opts,
             menu_endpoint,
-            zip_code,
+            output_path,
         } => {
             let locations = bb_chipotle::locations::Locations::get_all_us_custom(
                 &api_key,
@@ -93,29 +98,52 @@ async fn main() -> Result<()> {
                 location_opts.locations_endpoint.as_deref(),
             )
             .await?
+            // TODO: figure out how to not do this
             .into_iter()
-            .filter(|location| location.zip_code == zip_code.as_str());
-            let menus = tokio_stream::iter(locations)
-                .then(|location| {
-                    // i have no idea what i'm doing with this :(
-                    let api_key = api_key.clone();
-                    let http = http.clone();
-                    let menu_endpoint = menu_endpoint.clone();
-                    async move {
-                        let menu = Menu::get_custom(
-                            &location.id,
-                            &api_key,
-                            &http,
-                            menu_endpoint.as_deref(),
-                        )
-                        .await
-                        .unwrap();
-                        json!({"location": location, "menu": menu})
-                    }
-                })
-                .collect::<Vec<_>>()
-                .await;
-            println!("{}", serde_json::to_string_pretty(&menus)?);
+            .collect::<Vec<_>>();
+
+            // Get menus in batches of 5
+            let progress = ProgressBar::new(locations.len() as u64);
+            progress.set_style(
+                ProgressStyle::with_template(
+                    "[{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+                )
+                .unwrap(),
+            );
+            let mut menus = Vec::new();
+            let delay_between_batches = Duration::from_secs(1);
+            for location_batch in locations.chunks(5) {
+                let menu_batch = stream::iter(location_batch)
+                    .map(|location| {
+                        let api_key = api_key.clone();
+                        let http = http.clone();
+                        let menu_endpoint = menu_endpoint.clone();
+                        async move {
+                            let menu = Menu::get_custom(
+                                &location.id,
+                                &api_key,
+                                &http,
+                                menu_endpoint.as_deref(),
+                            )
+                            .await
+                            .unwrap();
+                            json!({"location": location, "menu": menu})
+                        }
+                    })
+                    .buffer_unordered(5)
+                    .collect::<Vec<_>>()
+                    .await;
+                menus.extend(menu_batch);
+                progress.inc(location_batch.len() as u64);
+                time::sleep(delay_between_batches).await;
+            }
+            progress.finish();
+            let json_output = serde_json::to_string_pretty(&menus)?;
+            if let Some(output_path) = output_path {
+                std::fs::write(output_path, json_output)?;
+            } else {
+                println!("{}", json_output);
+            }
         }
     }
 
